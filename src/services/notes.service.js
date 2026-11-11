@@ -1,54 +1,59 @@
 // src/services/notes.service.js
+import { pool } from "../db.js";
 import { AppError } from "../utils/AppError.js";
 
-let nextId = 3;
-let notes = [
-  {
-    id: 1,
-    title: "Learn HTTP",
-    content: "Methods and status codes",
-    pinned: false,
-  },
-  {
-    id: 2,
-    title: "Learn Express",
-    content: "Routes and middleware",
-    pinned: true,
-  },
-];
-
 export async function listNotes({ search, pinned } = {}) {
-  let result = notes;
+  const conditions = [];
+  const values = [];
+
   if (search) {
-    const term = search.toLowerCase();
-    result = result.filter((note) => note.title.toLowerCase().includes(term));
+    values.push(`%${search}%`);
+    conditions.push(`title ILIKE $${values.length}`);
   }
   if (pinned !== undefined) {
-    result = result.filter((note) => note.pinned === pinned);
+    values.push(pinned);
+    conditions.push(`pinned = $${values.length}`);
   }
-  return result;
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const { rows } = await pool.query(
+    `SELECT * FROM notes ${where} ORDER BY id`,
+    values,
+  );
+  return rows;
 }
 
 export async function getNote(id) {
-  const note = notes.find((n) => n.id === id);
-  if (!note) {
+  const { rows } = await pool.query("SELECT * FROM notes WHERE id = $1", [id]);
+  if (rows.length === 0) {
     throw new AppError(404, "Note not found");
   }
-  return note;
+  return rows[0];
 }
 
-export async function createNote({ title, content = "", pinned = false }) {
-  const note = { id: nextId++, title, content, pinned };
-  notes.push(note);
-  return note;
+export async function createNote({ title, content, pinned }) {
+  const { rows } = await pool.query(
+    "INSERT INTO notes (title, content, pinned) VALUES ($1, $2, $3) RETURNING *",
+    [title, content, pinned],
+  );
+  return rows[0];
 }
 
 export async function updateNote(id, changes) {
   const note = await getNote(id);
-  return Object.assign(note, changes);
+  const updated = { ...note, ...changes };
+  const { rows } = await pool.query(
+    "UPDATE notes SET title = $1, content = $2, pinned = $3 WHERE id = $4 RETURNING *",
+    [updated.title, updated.content, updated.pinned, id],
+  );
+  return rows[0];
 }
 
 export async function deleteNote(id) {
-  await getNote(id);
-  notes = notes.filter((n) => n.id !== id);
+  const { rowCount } = await pool.query("DELETE FROM notes WHERE id = $1", [
+    id,
+  ]);
+  if (rowCount === 0) {
+    throw new AppError(404, "Note not found");
+  }
 }
